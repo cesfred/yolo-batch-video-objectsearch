@@ -4,8 +4,15 @@
 
 Rekursive KI-Objektsuche in Videodateien nach COCO-Klassen. Gefundene Objekte werden
 mit Bounding-Boxes markiert und als Video-Schnipsel exportiert und optional am Ende
-der Prozessierung gemerged. Zusätzlich kann eine Log-Datei mit Datei-Path und 
+der Prozessierung gemerged. Zusätzlich kann eine Log-Datei mit Datei-Pfad und 
 Zeit-Indexen der gematchten Klassen exportiert werden.
+
+Recursive AI object search in video files according to COCO classes. Found objects are
+marked with bounding boxes and exported as video snippets and optionally merged at the end
+of processing. In addition, a log file with file paths and 
+time indexes of the matched classes can be exported.
+
+- See: [Ultralytics YOLO Dokumentatio](https://docs.ultralytics.com/de/datasets/detect/coco/)
 ---
 
 ## Deutsch
@@ -117,7 +124,7 @@ python3 object_search.py ./videos --objects 0,1 --export --overlay --overlay-pos
 
 1. Clone repository or download files  
    ```bash
-   git clone https://github.com/your-user/yolo-batch-video-objectsearch.git
+   git clone https://github.com/cesfred/yolo-batch-video-objectsearch.git
    cd yolo-batch-video-objectsearch
    ```
 
