@@ -2,6 +2,10 @@
 
 [Deutsch](#deutsch) | [English](#english)
 
+Rekursive KI-Objektsuche in Videodateien nach COCO-Klassen. Gefundene Objekte werden
+mit Bounding-Boxes markiert und als Video-Schnipsel exportiert und optional am Ende
+der Prozessierung gemerged. Zusätzlich kann eine Log-Datei mit Datei-Path und 
+Zeit-Indexen der gematchten Klassen exportiert werden.
 ---
 
 ## Deutsch
