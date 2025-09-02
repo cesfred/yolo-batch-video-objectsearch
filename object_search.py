@@ -233,7 +233,7 @@ def merge_clips(clips, output_path="highlights.mp4", quiet=False):
 def build_argparser():
     classes_text = "\n".join([f"{i:2d}: {name}" for i, name in enumerate(COCO_CLASSES)])
     parser = argparse.ArgumentParser(
-        description="YOLOv8 Batch-Videoanalyse mit Pause, STRG+C und Progressbar",
+        description="YOLOv8 Batch-Videoanalyse mit Resume, Pause, STRG+C und Progressbar",
         epilog=f"Verfügbare Objektklassen:\n{classes_text}",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -269,9 +269,28 @@ def main():
     if not videos:
         return
 
+    # --- Resume Feature ---
+    processed = set()
+    log_mode = "w"
+    if os.path.exists(args.log):
+        choice = input(f"[!] Logdatei {args.log} gefunden. Resume (r) oder neu starten (n)? [r/n]: ").strip().lower()
+        if choice == "r":
+            with open(args.log, "r", encoding="utf-8") as f:
+                for line in f:
+                    if ":" in line:
+                        processed.add(line.split(":", 1)[0])
+            videos = [v for v in videos if v not in processed]
+            log_mode = "a"
+            if not args.quiet:
+                print(f"[→] Resume aktiviert, {len(processed)} Videos übersprungen.")
+        else:
+            log_mode = "w"
+            if not args.quiet:
+                print("[→] Neu gestartet, Logdatei wird überschrieben.")
+
     all_clips = []
     try:
-        with open(args.log, "w", encoding="utf-8") as log_file:
+        with open(args.log, log_mode, encoding="utf-8") as log_file:
             with tqdm(total=len(videos), desc="Videos", unit="video") as video_pbar:
                 for v in videos:
                     clips = process_video(v, model, classes, log_file,
@@ -296,4 +315,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
