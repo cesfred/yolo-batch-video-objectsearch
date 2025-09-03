@@ -29,9 +29,16 @@ from ultralytics import YOLO
 from tqdm import tqdm
 
 # ------------------------
-# OpenCV/FFmpeg Logging drosseln
+# OpenCV Logging drosseln (robust für verschiedene Versionen)
 # ------------------------
-cv2.utils.logging.setLogLevel(cv2.utils.logging.ERROR)
+try:
+    if hasattr(cv2, "setLogLevel"):
+        try:
+            cv2.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
+        except AttributeError:
+            cv2.setLogLevel(3)  # 3 = ERROR-Level
+except Exception:
+    pass
 
 # ------------------------
 # COCO-Klassenliste
@@ -153,6 +160,7 @@ def process_video(video_path, model, classes, log_file,
     if not cap.isOpened():
         if not quiet:
             print(f"Fehler: {video_path} nicht geöffnet.")
+        log_file.write(f"{video_path}: -\n")
         return []
 
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -211,6 +219,10 @@ def process_video(video_path, model, classes, log_file,
                     clips.append(clip)
 
         log_file.write(f"{video_path}: {', '.join(ts_entries)}\n")
+    else:
+        # Kein Fund → trotzdem ins Log
+        log_file.write(f"{video_path}: -\n")
+
     return clips
 
 
