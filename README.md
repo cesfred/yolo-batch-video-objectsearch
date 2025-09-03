@@ -64,7 +64,8 @@ python3 object_search.py ./videos --objects 0,1 --export --overlay --overlay-pos
 
 - **Mehrere Videos rekursiv durchsuchen** (`.mp4`, `.avi`, `.mkv`, `.vs`, …)  
 - **Objekterkennung mit YOLOv8** (Standardmodell: `yolov8x.pt`)  
-- **Logdatei** mit Zeitstempeln aller erkannten Szenen  
+- **Logdatei** mit Zeitstempeln aller erkannten Szenen
+- **Resume** wenn schon eine Logdatei existiert, wird eine resume angeboten
 - **Export**: erkannte Szenen als Clips speichern (mit 3s Vor- und Nachlauf)  
 - **Overlay**: Dateiname + erkannte Objekte ins Video einblenden  
 - **Merge**: alle Clips automatisch zu `highlights.mp4` zusammenfügen  
@@ -167,7 +168,8 @@ python object_search.py ./videos --objects 0,1 --export --overlay --overlay-pos 
 
 - **Recursive video scanning** (`.mp4`, `.avi`, `.mkv`, `.vs`, …)  
 - **Object detection with YOLOv8** (default: `yolov8x.pt`)  
-- **Log file** with timestamps of detected scenes  
+- **Log file** with timestamps of detected scenes
+- **Resume*** if log already exist, offer resume feature
 - **Export**: save detected scenes as clips (+3s before and after)  
 - **Overlay**: add filename + detected objects to video  
 - **Merge**: combine all clips into `highlights.mp4`  
