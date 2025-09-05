@@ -1,6 +1,6 @@
 # python3 -m venv ./venv
 # source venv/bin/activate
-# python3 -m pip install ultralytics opencv-python
+# python3 -m pip install ultralytics opencv-python tqdm
 # wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8m.pt
 
 # nur log
@@ -113,7 +113,8 @@ def get_overlay_position(pos, width, height, text, font_scale=0.5, thickness=2):
 
 def export_clip(video_path, start_sec, end_sec, model, export_dir,
                 overlay=False, overlay_text="", overlay_pos="tl",
-                overlay_size=0.5, overlay_color=(255, 255, 255), quiet=False):
+                overlay_size=0.5, overlay_color=(255, 255, 255),
+                confidence=0.8, quiet=False):
     os.makedirs(export_dir, exist_ok=True)
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -137,7 +138,7 @@ def export_clip(video_path, start_sec, end_sec, model, export_dir,
         ret, frame = cap.read()
         if not ret:
             break
-        results = model(frame, verbose=False)
+        results = model(frame, conf=confidence, verbose=False)
         annotated = results[0].plot()
         if overlay and overlay_text:
             pos_xy = get_overlay_position(overlay_pos, width, height, overlay_text, overlay_size, 2)
@@ -155,7 +156,8 @@ def export_clip(video_path, start_sec, end_sec, model, export_dir,
 
 def process_video(video_path, model, classes, log_file,
                   export=False, overlay=False, overlay_pos="tl",
-                  overlay_size=0.5, overlay_color=(255, 255, 255), quiet=False):
+                  overlay_size=0.5, overlay_color=(255, 255, 255),
+                  pre=0.0, post=2.0, confidence=0.8, quiet=False):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         if not quiet:
@@ -183,7 +185,7 @@ def process_video(video_path, model, classes, log_file,
             ret, frame = cap.read()
             if not ret:
                 break
-            results = model(frame, classes=classes, verbose=False)
+            results = model(frame, classes=classes, conf=confidence, verbose=False)
             if len(results[0].boxes) > 0:
                 seconds = frame_idx / fps if fps > 0 else 0
                 detections.append((seconds, [COCO_CLASSES[int(b.cls[0])] for b in results[0].boxes]))
@@ -210,11 +212,12 @@ def process_video(video_path, model, classes, log_file,
             mm, ss = int(start // 60), int(start % 60)
             ts_entries.append(f"{mm:02d}:{ss:02d}")
             if export:
-                start_sec, end_sec = max(0, start - 3), end + 3
+                start_sec, end_sec = max(0, start - pre), end + post
                 objs = {obj for _, objs in cluster for obj in objs}
                 overlay_text = f"{os.path.basename(video_path)} | {', '.join(sorted(objs))}" if overlay else ""
                 clip = export_clip(video_path, start_sec, end_sec, model, "export",
-                                   overlay, overlay_text, overlay_pos, overlay_size, overlay_color, quiet=quiet)
+                                   overlay, overlay_text, overlay_pos, overlay_size,
+                                   overlay_color, confidence, quiet=quiet)
                 if clip:
                     clips.append(clip)
 
@@ -250,7 +253,7 @@ def build_argparser():
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("root", help="Wurzelverzeichnis")
-    parser.add_argument("--model", default="yolov8x.pt")
+    parser.add_argument("--model", default="yolov8l.pt")
     parser.add_argument("--log", default="objekt_log.txt")
     parser.add_argument("--objects", required=True, help="IDs wie 0,1")
     parser.add_argument("--export", action="store_true")
@@ -258,6 +261,10 @@ def build_argparser():
     parser.add_argument("--overlay-pos", default="tl")
     parser.add_argument("--overlay-size", type=float, default=0.5)
     parser.add_argument("--overlay-color", default="255,255,255")
+    parser.add_argument("--pre", type=float, default=0.0, help="Vorlaufzeit in Sekunden (default 0)")
+    parser.add_argument("--post", type=float, default=2.0, help="Nachlaufzeit in Sekunden (default 2)")
+    parser.add_argument("--confidence", type=float, default=0.8,
+                        help="Confidence-Threshold zwischen 0.0 und 1.0 (default 0.8)")
     parser.add_argument("--merge", action="store_true")
     parser.add_argument("--quiet", action="store_true", help="Unterdrückt alle Konsolenausgaben außer Progressbars")
     return parser
@@ -292,11 +299,11 @@ def main():
                     if ":" in line:
                         processed.add(line.split(":", 1)[0])
             videos = [v for v in videos if v not in processed]
-            log_mode = "a"
+            log_mode = "a"  # niemals überschreiben im Resume
             if not args.quiet:
                 print(f"[→] Resume aktiviert, {len(processed)} Videos übersprungen.")
         else:
-            log_mode = "w"
+            log_mode = "w"  # nur beim Neu-Start überschreiben
             if not args.quiet:
                 print("[→] Neu gestartet, Logdatei wird überschrieben.")
 
@@ -311,6 +318,9 @@ def main():
                                           overlay_pos=args.overlay_pos,
                                           overlay_size=args.overlay_size,
                                           overlay_color=overlay_color,
+                                          pre=args.pre,
+                                          post=args.post,
+                                          confidence=args.confidence,
                                           quiet=args.quiet)
                     all_clips.extend(clips)
                     video_pbar.update(1)
