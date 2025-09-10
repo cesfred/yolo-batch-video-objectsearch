@@ -35,6 +35,7 @@ python object_search.py <verzeichnis> --objects 0,1
 - `--objects` – Liste der zu suchenden Objekt-IDs (z. B. `0,1` für Person und Fahrrad)  
 - `--model` – YOLOv8 Modell, Standard: `yolov8x.pt`  
 - `--log` – Logdatei (Standard: `objekt_log.txt`)  
+- `--video-extensions` – Komma Separierte Liste mit gültigen File-Extension
 - `--export` – Exportiert erkannte Sequenzen als Clips
 - `--merge` – Fasst alle exportierten Clips in einem Video zusammen  
 - `--merge-ratio` – Erzwingt eine feste Zielgröße (z. B. `1920x1080`) beim Merge  
@@ -112,6 +113,7 @@ python object_search.py <directory> --objects 0,1
 - `--objects` – list of object IDs (e.g. `0,1` = person + bicycle)  
 - `--model` – YOLOv8 model, default: `yolov8x.pt`  
 - `--log` – logfile, default: `objekt_log.txt`  
+- `--video-extensions` – comma seperated list with valid file extensions
 - `--export` – export detected sequences as clips  
 - `--merge` – merge exported clips into one highlight video  
 - `--merge-ratio` – force a fixed output size (e.g. `1920x1080`) when merging  
