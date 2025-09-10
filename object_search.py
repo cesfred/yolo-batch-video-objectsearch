@@ -25,6 +25,7 @@ except Exception:
 # ------------------------
 @contextmanager
 def suppress_stderr_fd(enable: bool):
+    """Leitet FD 2 (stderr) temporär nach /dev/null um. Wirkt auch für FFmpeg (C-Code)."""
     if not enable:
         yield
         return
@@ -56,17 +57,16 @@ COCO_CLASSES = [
     "teddy bear", "hair drier", "toothbrush"
 ]
 
-VIDEO_EXTENSIONS = (".mp4", ".mpg", ".mpeg", ".avi", ".mov", ".mkv",
-                    ".flv", ".wmv", ".ts", ".vob", ".vs")
-
 # ------------------------
-# Tastatureingaben (Pause/Resume) – robust
+# Tastatureingaben (Pause/Resume) – robust & plattformübergreifend
+#   POSIX: cbreak/non-blocking wird LAZY erst beim ersten key_pressed() gesetzt,
+#   damit der Resume-Prompt (input) vorher funktioniert.
 # ------------------------
-def key_pressed():
+def key_pressed():  # Default-Fallback
     return None
 
 try:
-    import msvcrt
+    import msvcrt  # Windows
     def key_pressed():
         if msvcrt.kbhit():
             ch = msvcrt.getch()
@@ -76,6 +76,7 @@ try:
                 return None
         return None
 except ImportError:
+    # POSIX: Linux / macOS
     import sys as _sys, os as _os
     _POSIX_IS_TTY = _sys.stdin.isatty()
     _POSIX_TTY_READY = False
@@ -84,6 +85,7 @@ except ImportError:
     _POSIX_OLD_FLAGS = None
 
     def _setup_posix_keyreader():
+        """cbreak + non-blocking erst jetzt aktivieren (lazy)."""
         global _POSIX_TTY_READY, _POSIX_FD, _POSIX_OLD_ATTR, _POSIX_OLD_FLAGS
         if not _POSIX_IS_TTY or _POSIX_TTY_READY:
             return
@@ -120,16 +122,21 @@ except ImportError:
             return None
 
 # ------------------------
-# Hilfsfunktionen
+# Dateisuche
 # ------------------------
-def find_videos(root_dir):
+def find_videos(root_dir, extensions: str):
+    """Suche rekursiv nach Videodateien. 'extensions' ist eine Komma-Liste ohne Punkte, z. B. 'mp4,mov'."""
+    exts = tuple("." + e.strip().lower() for e in extensions.split(",") if e.strip())
     video_files = []
     for dirpath, _, filenames in os.walk(root_dir):
         for f in filenames:
-            if f.lower().endswith(VIDEO_EXTENSIONS):
+            if f.lower().endswith(exts):
                 video_files.append(os.path.join(dirpath, f))
     return video_files
 
+# ------------------------
+# Overlay-Position
+# ------------------------
 def get_overlay_position(pos, width, height, text, font_scale=0.5, thickness=2):
     margin = 10
     (text_w, text_h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
@@ -145,7 +152,7 @@ def get_overlay_position(pos, width, height, text, font_scale=0.5, thickness=2):
         return (margin, margin + text_h)
 
 # ------------------------
-# Export einzelner Clips
+# Export einzelner Clips (mit optionalen Bounding Boxes)
 # ------------------------
 def export_clip(video_path, start_sec, end_sec, model, export_dir,
                 overlay=False, overlay_text="", overlay_pos="tl",
@@ -172,15 +179,22 @@ def export_clip(video_path, start_sec, end_sec, model, export_dir,
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
         frame_idx = start_frame
+        fail_count = 0
         while frame_idx <= end_frame:
             ret, frame = cap.read()
             if not ret:
+                fail_count += 1
+                if fail_count <= 2:
+                    continue
                 break
+            fail_count = 0
+
             results = model(frame, conf=confidence, verbose=False)
             if no_boxes:
                 annotated = frame.copy()
             else:
                 annotated = results[0].plot()
+
             if overlay and overlay_text:
                 pos_xy = get_overlay_position(overlay_pos, width, height, overlay_text, overlay_size, 2)
                 cv2.putText(annotated, overlay_text, pos_xy,
@@ -218,8 +232,15 @@ def process_video(video_path, model, classes, log_file,
         detections = []
         paused = False
 
-        with tqdm(total=total_frames, desc=os.path.basename(video_path),
-                  unit="frame", leave=False, file=sys.stdout, disable=quiet) as pbar:
+        with tqdm(
+            total=total_frames,
+            desc=os.path.basename(video_path),
+            unit="frame",
+            leave=False,
+            file=sys.stdout,
+            disable=quiet
+        ) as pbar:
+            fail_count = 0
             while True:
                 key = key_pressed()
                 if key == "p":
@@ -232,7 +253,11 @@ def process_video(video_path, model, classes, log_file,
 
                 ret, frame = cap.read()
                 if not ret:
+                    fail_count += 1
+                    if fail_count <= 2:
+                        continue
                     break
+                fail_count = 0
 
                 results = model(frame, classes=classes, conf=confidence, verbose=False)
                 if len(results[0].boxes) > 0:
@@ -244,7 +269,9 @@ def process_video(video_path, model, classes, log_file,
         cap.release()
 
     clips = []
+
     if detections:
+        # Szenen clustern (Lücke <= cluster_gap Sekunden)
         scenes, cluster = [], [detections[0]]
         for t in detections[1:]:
             if t[0] - cluster[-1][0] <= cluster_gap:
@@ -263,11 +290,12 @@ def process_video(video_path, model, classes, log_file,
                 start_sec, end_sec = max(0, start - pre), end + post
                 objs = {obj for _, objs in cluster for obj in objs}
                 overlay_text = f"{os.path.basename(video_path)} | {', '.join(sorted(objs))}" if overlay else ""
-                clip = export_clip(video_path, start_sec, end_sec, model, export_dir,
-                                   overlay, overlay_text, overlay_pos, overlay_size,
-                                   overlay_color, confidence,
-                                   silence_decoder_warnings, quiet=quiet,
-                                   no_boxes=no_boxes)
+                clip = export_clip(
+                    video_path, start_sec, end_sec, model, export_dir,
+                    overlay, overlay_text, overlay_pos, overlay_size,
+                    overlay_color, confidence, silence_decoder_warnings,
+                    quiet=quiet, no_boxes=no_boxes
+                )
                 if clip:
                     clips.append(clip)
 
@@ -278,6 +306,144 @@ def process_video(video_path, model, classes, log_file,
         log_file.flush()
 
     return clips
+
+# ------------------------
+# Hilfsfunktionen für Merge (Normalisierung & Concat)
+# ------------------------
+def ffprobe_size(path):
+    try:
+        out = subprocess.check_output([
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=s=x:p=0",
+            path
+        ])
+        s = out.decode("utf-8").strip()
+        if "x" in s:
+            w, h = s.split("x")
+            return int(w), int(h)
+    except Exception:
+        pass
+    return None, None
+
+
+def normalize_clips_for_concat(clips, target_w=None, target_h=None, export_dir="./export",
+                               quiet=False, skip_bad=False):
+    """Normalisiert alle Clips auf gleiche Größe (scale+pad). Bei Fehlern:
+       - skip_bad=True: Clip wird ausgelassen
+       - skip_bad=False: Fallback auf Original (Concat kann später scheitern)
+    """
+    if not clips:
+        return [], (0, 0)
+
+    def probe_size(p):
+        try:
+            out = subprocess.check_output([
+                "ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=width,height",
+                "-of", "csv=s=x:p=0", p
+            ])
+            s = out.decode("utf-8").strip()
+            if "x" in s:
+                w, h = s.split("x")
+                return int(w), int(h)
+        except Exception:
+            pass
+        return None, None
+
+    sizes = []
+    for c in clips:
+        w, h = probe_size(c)
+        if not (w and h):
+            cap = cv2.VideoCapture(c)
+            if cap.isOpened():
+                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            cap.release()
+        if w and h:
+            sizes.append((c, w, h))
+
+    if not sizes:
+        return clips, (0, 0)
+
+    # Zielgröße bestimmen
+    if not target_w or not target_h:
+        _, target_w, target_h = max(sizes, key=lambda t: t[1] * t[2])
+
+    norm_dir = os.path.join(export_dir, "normalized")
+    os.makedirs(norm_dir, exist_ok=True)
+
+    keep_for_merge = []
+
+    for idx, (c, w, h) in enumerate(sizes):
+        out_path = os.path.join(norm_dir, f"norm_{idx:04d}.mp4")
+        vf = f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease," \
+             f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2"
+
+        # Robuster Transcode mit großzügigem Probe/Analyze und „ignore_err“
+        cmd = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-analyzeduration", "100M", "-probesize", "100M",
+            "-fflags", "+genpts+discardcorrupt", "-err_detect", "ignore_err",
+            "-i", c,
+            "-vf", vf,
+            "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-crf", "18", "-preset", "veryfast",
+            "-c:a", "aac", "-movflags", "+faststart",
+            out_path
+        ]
+        try:
+            subprocess.run(cmd, check=True)
+            keep_for_merge.append(out_path)
+        except subprocess.CalledProcessError:
+            if not quiet:
+                print(f"[!] Normalisierung fehlgeschlagen für {c}")
+            if skip_bad:
+                if not quiet:
+                    print(f"    → Clip wird übersprungen.")
+                continue
+            else:
+                if not quiet:
+                    print(f"    → Fallback: Original verwenden (Concat kann scheitern).")
+                keep_for_merge.append(c)
+
+    return keep_for_merge, (target_w, target_h)
+
+
+def merge_clips(clips, output_path="highlights.mp4", merge_ratio=None, export_dir="./export",
+                quiet=False, skip_bad=False):
+    if not clips:
+        return
+
+    target_w, target_h = None, None
+    if merge_ratio and "x" in merge_ratio:
+        try:
+            target_w, target_h = [int(x) for x in merge_ratio.split("x")]
+        except ValueError:
+            if not quiet:
+                print("[!] Ungültiges --merge-ratio Format, benutze automatische Auswahl.")
+
+    normalized, (tw, th) = normalize_clips_for_concat(
+        clips, target_w, target_h, export_dir, quiet=quiet, skip_bad=skip_bad
+    )
+    if not normalized:
+        if not quiet:
+            print("[!] Keine Clips zum Mergen (evtl. alle übersprungen?).")
+        return
+
+    list_file = os.path.join(export_dir, "merge_list.txt")
+    with open(list_file, "w", encoding="utf-8") as f:
+        for c in normalized:
+            f.write(f"file '{os.path.abspath(c)}'\n")
+
+    subprocess.run([
+        "ffmpeg", "-hide_banner", "-loglevel", "error",
+        "-y", "-f", "concat", "-safe", "0",
+        "-i", list_file, "-c", "copy", output_path
+    ], check=True)
+    if not quiet:
+        print(f"[✓] Highlight-Video erstellt: {output_path} ({tw}x{th})")
 
 # ------------------------
 # CLI / Main
@@ -293,6 +459,9 @@ def build_argparser():
     parser.add_argument("--model", default="yolov8x.pt")
     parser.add_argument("--log", default="objekt_log.txt")
     parser.add_argument("--objects", required=True, help="IDs wie 0,1")
+    parser.add_argument("--video-extensions",
+                        default="mp4,mpg,mpeg,avi,mov,mkv,flv,wmv,ts,vob,vs",
+                        help="Komma-separierte Liste gültiger Video-Endungen (ohne Punkt)")
     parser.add_argument("--export", action="store_true")
     parser.add_argument("--overlay", action="store_true")
     parser.add_argument("--overlay-pos", default="tl")
@@ -307,11 +476,14 @@ def build_argparser():
     parser.add_argument("--merge-file", default="highlights.mp4")
     parser.add_argument("--export-dir", default="./export")
     parser.add_argument("--silence-decoder-warnings", action="store_true")
-    parser.add_argument("--skip-bad-clips", action="store_true")
-    parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--skip-bad-clips", action="store_true",
+                        help="Bei Normalisierungsfehlern Clip aus dem Merge ausschließen")
+    parser.add_argument("--quiet", action="store_true",
+                        help="Keine Ausgaben und keine Progressbars")
     parser.add_argument("--no-boxes", action="store_true",
                         help="Keine Bounding Boxes einblenden, nur Overlay-Text")
     return parser
+
 
 def main():
     parser = build_argparser()
@@ -320,21 +492,23 @@ def main():
     model = YOLO(args.model)
 
     try:
-        b,g,r = [int(c) for c in args.overlay_color.split(",")]
-        overlay_color = (b,g,r)
+        b, g, r = [int(c) for c in args.overlay_color.split(",")]
+        overlay_color = (b, g, r)
     except Exception:
-        overlay_color = (255,255,255)
+        overlay_color = (255, 255, 255)
 
+    # Konsistenz-Check
     if args.merge and not args.export:
         print("Hinweis: --merge erwartet --export. Bitte beide Optionen zusammen verwenden.")
         return
 
-    videos = find_videos(args.root)
+    videos = find_videos(args.root, args.video_extensions)
     if not args.quiet:
         print(f"Gefundene Videos: {len(videos)}")
     if not videos:
         return
 
+    # Resume
     processed = set()
     log_mode = "w"
     if os.path.exists(args.log):
@@ -351,8 +525,10 @@ def main():
         if choice == "r":
             with open(args.log, "r", encoding="utf-8") as f:
                 for line in f:
+                    line = line.rstrip("\n")
                     if ": " in line:
-                        processed.add(line.split(": ",1)[0])
+                        path = line.rsplit(": ", 1)[0]
+                        processed.add(path)
             videos = [v for v in videos if v not in processed]
             log_mode = "a"
             if not args.quiet:
@@ -365,23 +541,30 @@ def main():
     all_clips = []
     try:
         with open(args.log, log_mode, encoding="utf-8") as log_file:
-            with tqdm(total=len(videos), desc="Videos", unit="video",
-                      file=sys.stdout, disable=args.quiet) as video_pbar:
+            with tqdm(
+                total=len(videos),
+                desc="Videos",
+                unit="video",
+                file=sys.stdout,
+                disable=args.quiet
+            ) as video_pbar:
                 for v in videos:
-                    clips = process_video(v, model, classes, log_file,
-                                          export=args.export,
-                                          overlay=args.overlay,
-                                          overlay_pos=args.overlay_pos,
-                                          overlay_size=args.overlay_size,
-                                          overlay_color=overlay_color,
-                                          pre=args.pre,
-                                          post=args.post,
-                                          confidence=args.confidence,
-                                          export_dir=args.export_dir,
-                                          silence_decoder_warnings=args.silence_decoder_warnings,
-                                          quiet=args.quiet,
-                                          cluster_gap=args.cluster_gap,
-                                          no_boxes=args.no_boxes)
+                    clips = process_video(
+                        v, model, classes, log_file,
+                        export=args.export,
+                        overlay=args.overlay,
+                        overlay_pos=args.overlay_pos,
+                        overlay_size=args.overlay_size,
+                        overlay_color=overlay_color,
+                        pre=args.pre,
+                        post=args.post,
+                        confidence=args.confidence,
+                        export_dir=args.export_dir,
+                        silence_decoder_warnings=args.silence_decoder_warnings,
+                        quiet=args.quiet,
+                        cluster_gap=args.cluster_gap,
+                        no_boxes=args.no_boxes
+                    )
                     all_clips.extend(clips)
                     video_pbar.update(1)
     except KeyboardInterrupt:
@@ -392,8 +575,11 @@ def main():
     if not args.quiet:
         print(f"Fertig! Ergebnisse in {args.log}")
     if args.export and args.merge:
-        # merge_clips ist wie zuvor definiert
-        pass
+        merge_clips(
+            all_clips, args.merge_file, args.merge_ratio, args.export_dir,
+            quiet=args.quiet, skip_bad=args.skip_bad_clips
+        )
+
 
 if __name__ == "__main__":
     main()
